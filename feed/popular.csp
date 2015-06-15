@@ -1,0 +1,354 @@
+<script language="cache" method="OnPreHTTP" arguments="" returntype="%Boolean">
+	
+	//--------------------------------------------------------------------------
+	//
+	// Initialize:
+	//
+	//--------------------------------------------------------------------------
+	
+	/**
+	 * Required boolean return value.
+	 *
+	 * @see http://docs.intersystems.com/cache20091/csp/documatic/%25CSP.Documatic.cls?APP=1&CLASSNAME=%25CSP.Page
+	 */
+	
+	set return = 1
+	
+	/**
+	 * Default publication:
+	 */
+	
+	set page("publication") = "rg"
+	
+	/**
+	 * Total number of popular items to return.
+	 */
+	
+	set page("max") = 100
+	
+	//--------------------------------------------------------------------------
+	//
+	// Get and validate:
+	//
+	//--------------------------------------------------------------------------
+	
+	/**
+	 * JSONP callback name.
+	 *
+	 * Only allow alphanumeric, underscores, no leading numbers and l/r-trim spaces.
+	 * Default is an empty string.
+	 *
+	 * Example call:
+	 * http://site.com/popular.csp?callback=foo
+	 *
+	 * jQuery $.getJSON() example:
+	 * ?callback=jQuery2110023872184265479546_1410218861295&page=1&format=json&_=1410218861296
+	 */
+	
+	set page("callback") = $zstrip($zstrip($get(%request.Data("callback", 1)), "*E'A'N",, "_"), "<N")
+	
+	/**
+	 * Page number for pagination.
+	 *
+	 * Must be whole number integer.
+	 * Default is 1.
+	 * Negative numbers get converted to positive.
+	 * 0 becomes 1.
+	 * Leading alpha characters are removed.
+	 *
+	 * Example call:
+	 * http://site.com/popular.csp?page=3
+	 *
+	 * @see http://docs.intersystems.com/cache20091/csp/docbook/DocBook.UI.Page.cls?KEY=RBAS_ointdiv
+	 * @see http://docs.intersystems.com/cache20091/csp/docbook/DocBook.UI.Page.cls?KEY=RSQL_abs
+	 */
+	
+	set page("page") = $zabs($zstrip($get(%request.Data("page", 1), 1), "*E'N"))
+	set:(page("page") <= 0) page("page") = 1
+	
+	/**
+	 * Items per page.
+	 *
+	 * Default is 20.
+	 * Negative numbers get converted to positive.
+	 * 0 becomes 20.
+	 * Leading alpha characters are removed.
+	 * A number greater than the max becomes 20.
+	 *
+	 * Example call:
+	 * http://site.com/popular.csp?page=3
+	 */
+	
+	set page("per") = $zabs($zstrip($get(%request.Data("per", 1), 20), "*E'N"))
+	set:((page("per") <= 0) || (page("per") >= page("max"))) page("per") = 20
+	
+	//--------------------------------------------------------------------------
+	//
+	// Pagination calculations:
+	//
+	//--------------------------------------------------------------------------
+	
+	/**
+	 * Calculate max hits for pagination.
+	 *
+	 * The default is 5.
+	 *
+	 * Logic example:
+	 * ((page=3) * (per=20)) = 60 max hits to return from the popular code.
+	 */
+	
+	set (page("hits"), page("hits", "raw")) = page("page") * page("per")
+	set:(page("hits") > page("max")) page("hits") = page("max")
+	
+	/**
+	 * Calculate starting point for pagination.
+	 *
+	 * Always add 1 because pages don't start at 0.
+	 *
+	 * Logic example:
+	 * (60 - 20 + 1) = 41
+	 */
+	
+	set page("start") = (page("hits", "raw") - page("per")) + 1
+	
+	/**
+	 * Determine total allowed pages.
+	 */
+	
+	set page("page", "total") = $system.SQL.CEILING(page("max") / page("per"))
+	
+	/**
+	 * Time period to query.
+	 *
+	 * How far into the past should this range extend in minutes.
+	 * The popular tag's default is 180.
+	 * We're going to use 24 hours.
+	 */
+	
+	set page("range") = "1440"
+	set page("range", "hours") = (page("range") / 60)
+	
+	/**
+	 * Popular type.
+	 *
+	 * Options are: STORY (0), EMAILED (1), COMMENT (2).
+	 * The default is STORY.
+	 */
+	
+	set page("type") = 0
+	set page("type", "name") = $list($listbuild("STORY", "EMAILED", "COMMENT"), (page("type") + 1))
+	
+	//--------------------------------------------------------------------------
+	//
+	// Response:
+	//
+	//--------------------------------------------------------------------------
+	
+	if (page("page") > page("page", "total")) {
+		
+		//----------------------------------
+		// 404 if page limit reached:
+		//----------------------------------
+		
+		set return = 0
+		set %response.Status = "404 Not Found"
+		
+	} else {
+		
+		//----------------------------------
+		// ... otherwise, return JSONP/JSON:
+		//----------------------------------
+		
+		; Depending on existence of callback, send JSONP or JSON header:
+		do %response.SetHeader("Content-Type", $select($length(page("callback")):"application/javascript", 1:"application/json"))
+		do %response.ExpiresSet("600") // Cache 600 seconds (10 minutes) from now.
+		do %response.GzipOutputSet(1)
+		set %response.CharSet = "utf-8"
+		set %response.VaryByParam = "page,per"
+		
+	}
+	
+	quit return // Exit with boolean, 1 or 0.
+	
+</script>
+
+<csp:comment>
+//--------------------------------------------------------------------------
+//
+// CSP methods:
+//
+//--------------------------------------------------------------------------
+</csp:comment>
+
+<script language="cache" method="get" arguments='key:%String="", default:%String=""' returntype="%String" procedureblock="1">
+	
+	/**
+	 * Get and sanitize %request keys.
+	 *
+	 * @param { %String } %key Key to get.
+	 * @param { %String } %default Default value.
+	 */
+	
+	if ($length(key)) {
+		
+		set key = $zstrip($zconvert($get(%request.Data(key, 1), default), "L"), "*E'A")
+		
+	}
+	
+	quit key
+	
+</script>
+
+<script language="cache" method="safe" arguments='string:%String="", strip:%Integer=1' returntype="%String" procedureblock="1">
+	
+	/**
+	 * Returns JSON encoded string.
+	 *
+	 * Control characters (0-31, 127-159) are stripped by default.
+	 *
+	 * Taken from: ##class(dt.common.util.JSONtools).EncodeString4JSON()
+	 *
+	 * @see https://gist.github.com/mhulse/4567827
+	 * @param { %String } string String to sanitize.
+	 * @param { %Integer } strip Strip control characters?
+	 */
+	
+	if ($length(string)) {
+		
+		; R/L $c(9,32,160) trim:
+		set string = $zstrip(string, "<>W")
+		
+		; Sanitize common stuff:
+		set string = $replace(string, "\", "\\")
+		set string = $replace(string, """", "\""")
+		set string = $replace(string, "/", "\/")
+		
+		; Strip control characters?
+		if (strip) {
+			
+			; Yes:
+			set string = $zstrip(string, "*C")
+			
+		} else {
+			
+			; No, so sanitize the common ones:
+			set string = $replace(string, $char(8), "\b")
+			set string = $replace(string, $char(12), "\f")
+			set string = $replace(string, $char(10), "\n")
+			set string = $replace(string, $char(13), "\r")
+			set string = $replace(string, $char(11), "\t")
+			
+		}
+		
+	}
+	
+	quit string
+	
+</script>
+
+<csp:comment>
+//--------------------------------------------------------------------------
+//
+// Output:
+//
+//--------------------------------------------------------------------------
+</csp:comment>
+		
+<csp:if condition='$length(page("callback"))'>#(page("callback"))#(</csp:if>{
+	
+	"hits": #(page("hits"))#,
+	"page": #(page("page"))#,
+	"per": #(page("per"))#,
+	"range": #(page("range", "hours"))#,
+	"start": #(page("start"))#,
+	
+	"stories": [
+		
+		#[ set page("popular") = ##class(dt.cms.trace.Popular).getPopular(page("type"), page("hits"), page("range"), ..get("section", ""), ..get("publication", page("publication"))) ]#
+		
+		<csp:loop counter="x" from="#(page("start"))#" to="#(page("popular").Count())#">
+			
+			{
+				
+				<script language="cache" runat="server">
+					
+					new pop, pics
+					
+					set pop = page("popular").GetAt(x)
+					
+					set pics("top") = ##class(custom.rg.Pick).pics(pop.cmsStory, "608pxw-1", 4,, 1) // Isotope box width = 300px; thus, image size needs to be at least 600px for retina display.
+					set pics("top") = pics("top").GetNext()
+					
+				</script>
+				
+				<csp:if condition='$isobject(pics("top"))'>
+					
+					#[ set pics("size") = ##class(csp.rg.assets.methods.image).getimagesize(pics("top").image) ]#
+					
+					"image": {
+						<csp:if condition='$listvalid(pics("size")) && $listdata(pics("size")) && $listdata(pics("size"), 2) && $listdata(pics("size"), 3)'>
+							"width": #(..safe($list(pics("size"), 2)))#,
+							"height": #(..safe($list(pics("size"), 3)))#,
+						</csp:if>
+						"caption": "#(..safe(##class(csp.rg.assets.methods.image).meta(pics("top"), "caption")))#",
+						"path": "#(..safe(##class(dt.cms.support.Rules).getSrcStream(pics("top").%Id())))#"
+					},
+					
+				</csp:if>
+				
+				#[ kill pics ]#
+				
+				<csp:comment>
+				"created": "#(..safe(pop.cmsStory.getStory().created))#",
+				"last_modified": "#(..safe(pop.cmsStory.getLastModified()))#",
+				"pub_tracking_latest": "#(..safe(##class(csp.rg.assets.methods.story).cmsPubTracking(pop.cmsStory, 1)))#",
+				"published_to_web_date": "#(..safe(pop.cmsStory.publishedToWebDate))#",
+				"slug": "#(..safe(pop.cmsStory.getStory().storyName))#",
+				"views": #(..safe(pop.hits))#
+				</csp:comment>
+				
+				"byline": "#(..safe(##class(csp.rg.assets.methods.story).byline(pop.cmsStory)))#",
+				"category": "#(..safe(##class(csp.rg.assets.methods.category).catName(pop.cmsStory.getStory().subCategoryId)))#",
+				"count": #(..safe(x))#,
+				"deck": "#(..safe(##class(csp.rg.assets.methods.story).subHeadline(pop.cmsStory)))#",
+				"headline": "#(..safe(##class(csp.rg.assets.methods.story).headline(pop.cmsStory)))#",
+				"path": "#(..safe(##class(csp.rg.assets.methods.story).uri(pop.section, pop.cmsStory, pop.cmsStory.defaultFullLayout)))#",
+				"published": "#(..safe(##class(csp.rg.assets.methods.story).cmsPubTracking(pop.cmsStory)))#",
+				"section": "#(..safe(pop.section.getLabel()))#",
+				"section_link": "#(..safe($replace($replace(pop.section.getLink(), "/csp/cms/sites", ""), "index.csp", "")))#",
+				"server": "http://#(..safe(%request.GetCgiEnv("SERVER_NAME")))#"
+				
+			}<csp:if condition='x < page("popular").Count()'>,</csp:if>
+			
+			#[ kill pop ]#
+			
+		</csp:loop>
+		
+	]
+	
+}<csp:if condition='$length(page("callback"))'>);</csp:if>
+
+<csp:comment>
+<script language="cache" runat="server">
+	
+	//--------------------------------------------------------------------------
+	//
+	// Debug:
+	//
+	//--------------------------------------------------------------------------
+	
+	write !, "<pre>"
+	try {
+		set currIO = ##class(%SYS.NLS.Device).SetIO("HTML")
+		zwrite
+	}
+	catch {
+		write "ERROR: ", $ZERROR
+	}
+	if $get(currIO) '= "" {
+		do ##class(%SYS.NLS.Device).SetIO(currIO)
+	}
+	write "</pre>"
+	
+</script>
+</csp:comment>
